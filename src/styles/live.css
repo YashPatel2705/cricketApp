@@ -1,0 +1,60 @@
+.live-container {
+    max-width: 500px;
+    margin: auto;
+    padding: 20px;
+  }
+  
+  .setup-panel, .ball-form, .score-board {
+    background: white;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+  }
+  
+  .setup-panel h2 {
+    font-size: 18px;
+    margin-bottom: 10px;
+    color: #333;
+  }
+  
+  .player-selector {
+    margin-bottom: 10px;
+  }
+  
+  .ball-form .form-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  
+  .ball-form input,
+  .ball-form select {
+    flex: 1;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+  }
+  
+  .ball-form button,
+  .setup-panel button {
+    width: 100%;
+    padding: 10px;
+    background: #007BFF;
+    color: white;
+    border: none;
+    border-radius: 5px;
+  }
+  
+  .score-board h2 {
+    text-align: center;
+    font-size: 20px;
+    margin-bottom: 8px;
+  }
+  
+  .score-board .score {
+    font-size: 24px;
+    text-align: center;
+    font-weight: bold;
+  }
+  
