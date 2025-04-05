@@ -4,6 +4,7 @@ import ManagePlayers from './pages/Players/ManagePlayers';
 import PlayerFormPage from './pages/Players/PlayerFormPage';
 import ManageTeams from './pages/Teams/ManageTeams';
 import ManageMatches from './pages/Matches/ManageMatches';
+import LiveScoringWrapper from './pages/LiveScoringWrapper';
 function App() {
   return (
     <Router>
@@ -13,6 +14,8 @@ function App() {
           <Route path="/player-form" element={<PlayerFormPage />} />
           <Route path="/teams" element={<ManageTeams />} />
           <Route path="/matches" element={<ManageMatches />} />
+          <Route path="/live-scoring/:matchId" element={<LiveScoringWrapper />} />
+
         </Routes>
 
         <nav className="fixed bottom-0 w-full bg-white border-t flex justify-around p-2">
