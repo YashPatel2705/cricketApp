@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import useMatchStore from '../../store/useMatchStore';
 import useTeamStore from '../../store/useTeamStore';
 import socket from '../../utils/socket';
+import axios from 'axios';
+import { syncPendingMatchData, isApiAvailable } from '../../utils/apiSync';
 
 const LiveScoringPanel = () => {
   const { matchId } = useParams();
   const { matches, fetchMatches } = useMatchStore();
   const { teams, fetchTeams } = useTeamStore();
+  const navigate = useNavigate();
 
   const [batsman1, setBatsman1] = useState(null);
   const [batsman2, setBatsman2] = useState(null);
@@ -19,13 +22,21 @@ const LiveScoringPanel = () => {
   const [recentBalls, setRecentBalls] = useState([]);
   const [overStarted, setOverStarted] = useState(false);
   const [runs, setRuns] = useState(0);
-  const [wickets, setWickets] = useState(0); // NEW: Track wickets count
+  const [wickets, setWickets] = useState(0);
   const [balls, setBalls] = useState(0);
   const [strike, setStrike] = useState('batsman1');
   const [ballHistory, setBallHistory] = useState([]);
-  // Enhanced ball history to include wicket details
+  const [currentInnings, setCurrentInnings] = useState(1);
+  const [showSecondInningsPrompt, setShowSecondInningsPrompt] = useState(false);
+  const [isInningsComplete, setIsInningsComplete] = useState(false);
+  const [firstInningsScore, setFirstInningsScore] = useState(0);
+  const [firstInningsWickets, setFirstInningsWickets] = useState(0);
+  const [firstInningsOvers, setFirstInningsOvers] = useState(0);
+  const [showSecondInningsConfirmation, setShowSecondInningsConfirmation] = useState(false);
+  const [runsToWin, setRunsToWin] = useState(0);
+  const [isMatchComplete, setIsMatchComplete] = useState(false);
+  const [winningTeam, setWinningTeam] = useState(null);
   const [enhancedBallHistory, setEnhancedBallHistory] = useState([]);
-  // Wicket handling states
   const [showWicketModal, setShowWicketModal] = useState(false);
   const [wicketType, setWicketType] = useState('');
   const [fielder, setFielder] = useState('');
@@ -34,27 +45,21 @@ const LiveScoringPanel = () => {
   const [battingTeamPlayers, setBattingTeamPlayers] = useState([]);
   const [bowlingTeamPlayers, setBowlingTeamPlayers] = useState([]);
   const [outPlayers, setOutPlayers] = useState([]);
-  // NEW: Bowler selection modal
   const [showBowlerModal, setShowBowlerModal] = useState(false);
   const [selectedBowler, setSelectedBowler] = useState('');
-  const [previousBowlers, setPreviousBowlers] = useState([]); // Track bowlers to enforce consecutive over rule
-  // NEW: Over statistics
+  const [previousBowlers, setPreviousBowlers] = useState([]);
   const [currentOverStats, setCurrentOverStats] = useState({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
   const [overHistory, setOverHistory] = useState([]);
-  // NEW: Bowler statistics
   const [bowlerStats, setBowlerStats] = useState({});
-  
-  // Individual stats for each batsman
   const [batsmanStats, setBatsmanStats] = useState({
     batsman1: { runs: 0, balls: 0, fours: 0, sixes: 0 },
     batsman2: { runs: 0, balls: 0, fours: 0, sixes: 0 }
   });
-
   const [showNextOverButton, setShowNextOverButton] = useState(false);
   const [isOverComplete, setIsOverComplete] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(true); // Assuming the current user is admin
-  // Add new state to track undo count per over
+  const [isAdmin, setIsAdmin] = useState(true);
   const [undoCountInOver, setUndoCountInOver] = useState(0);
+  const [isLastWicket, setIsLastWicket] = useState(false);
 
   useEffect(() => {
     fetchMatches();
@@ -64,27 +69,23 @@ const LiveScoringPanel = () => {
     const savedState = JSON.parse(localStorage.getItem(`score-${matchId}`));
     if (savedState) {
       setRuns(savedState.runs || 0);
-      setWickets(savedState.wickets || 0); // NEW: Load wickets
+      setWickets(savedState.wickets || 0);
       setBalls(savedState.balls || 0);
       setRecentBalls(savedState.recentBalls || []);
       setStrike(savedState.strike || 'batsman1');
       
-      // Load batsman stats if available
       if (savedState.batsmanStats) {
         setBatsmanStats(savedState.batsmanStats);
       }
 
-      // Load bowler stats if available
       if (savedState.bowlerStats) {
         setBowlerStats(savedState.bowlerStats);
       }
 
-      // Load over history
       if (savedState.overHistory) {
         setOverHistory(savedState.overHistory);
       }
 
-      // Load previous bowlers
       if (savedState.previousBowlers) {
         setPreviousBowlers(savedState.previousBowlers);
       }
@@ -103,7 +104,6 @@ const LiveScoringPanel = () => {
       }
     }
 
-    // Load out players
     const savedOutPlayers = JSON.parse(localStorage.getItem(`outPlayers-${matchId}`)) || [];
     setOutPlayers(savedOutPlayers);
   }, []);
@@ -170,34 +170,298 @@ const LiveScoringPanel = () => {
     if (isMatchStarted) {
       const newPaused = !isMatchPaused;
       setIsMatchPaused(newPaused);
-      persistMatchStatus({ isMatchStarted: true, isMatchPaused: newPaused, overStarted });
+      persistMatchStatus({ isMatchStarted, isMatchPaused, overStarted });
     } else {
-      // When starting the match, automatically start the over too
       setIsMatchStarted(true);
       setIsMatchPaused(false);
-      setOverStarted(true); // Auto-start the over when starting the match
+      setOverStarted(true);
       persistMatchStatus({ isMatchStarted: true, isMatchPaused: false, overStarted: true });
     }
   };
 
-  const handleFinish = () => {
+  const handleSecondInnings = () => {
+    // Reset all scoring-related states
+    setRuns(0);
+    setWickets(0);
+    setBalls(0);
+    setRecentBalls([]);
+    setBallHistory([]);
+    setEnhancedBallHistory([]);
+    setCurrentOverStats({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
+    setOverHistory([]);
+    setBowlerStats({});
+    setBatsmanStats({
+      batsman1: { runs: 0, balls: 0, fours: 0, sixes: 0 },
+      batsman2: { runs: 0, balls: 0, fours: 0, sixes: 0 }
+    });
+    setOutPlayers([]);
+    
+    // Swap batting and bowling teams
+    if (toss) {
+      const newToss = {
+        ...toss,
+        batFirst: toss.bowlFirst,
+        bowlFirst: toss.batFirst
+      };
+      setToss(newToss);
+      localStorage.setItem(`toss-${matchId}`, JSON.stringify(newToss));
+      
+      // Update batting and bowling team players
+      const battingTeam = teams.find(t => t._id === newToss.batFirst);
+      const bowlingTeam = teams.find(t => t._id === newToss.bowlFirst);
+      
+      if (battingTeam?.players) {
+        setBattingTeamPlayers(battingTeam.players.map(p => p.player));
+      }
+      
+      if (bowlingTeam?.players) {
+        setBowlingTeamPlayers(bowlingTeam.players.map(p => p.player));
+      }
+      
+      // Set initial batsmen and bowler
+      const playerData = JSON.parse(localStorage.getItem(`players-${matchId}`)) || {};
+      if (battingTeam?.players) {
+        const firstBatsman = battingTeam.players.find(p => p.player._id === playerData.batsman1)?.player || battingTeam.players[0]?.player;
+        const secondBatsman = battingTeam.players.find(p => p.player._id === playerData.batsman2)?.player || battingTeam.players[1]?.player;
+        
+        setBatsman1(firstBatsman);
+        setBatsman2(secondBatsman);
+        
+        localStorage.setItem(`players-${matchId}`, JSON.stringify({ 
+          ...playerData, 
+          batsman1: firstBatsman._id,
+          batsman2: secondBatsman._id
+        }));
+      }
+      
+      if (bowlingTeam?.players) {
+        const firstBowler = bowlingTeam.players[0]?.player;
+        setBowler(firstBowler);
+        
+        localStorage.setItem(`players-${matchId}`, JSON.stringify({ 
+          ...playerData, 
+          bowler: firstBowler._id
+        }));
+      }
+    }
+    
+    // Update innings number
+    setCurrentInnings(2);
+    setShowSecondInningsPrompt(false);
+    setShowSecondInningsConfirmation(false);
+    setIsInningsComplete(false);
+    
+    // Save state
+    persistState({ 
+      runs: 0, 
+      wickets: 0,
+      balls: 0, 
+      recentBalls: [], 
+      strike: 'batsman1',
+      batsmanStats: {
+        batsman1: { runs: 0, balls: 0, fours: 0, sixes: 0 },
+        batsman2: { runs: 0, balls: 0, fours: 0, sixes: 0 }
+      },
+      bowlerStats: {},
+      overHistory: [],
+      previousBowlers: []
+    });
+    
+    // Notify socket
+    socket.emit('updateMatch', {
+      matchId,
+      runs: 0,
+      wickets: 0,
+      balls: 0,
+      recentBalls: [],
+      strike: 'batsman1',
+      batsmanStats: {
+        batsman1: { runs: 0, balls: 0, fours: 0, sixes: 0 },
+        batsman2: { runs: 0, balls: 0, fours: 0, sixes: 0 }
+      },
+      bowlerStats: {},
+      overHistory: [],
+      previousBowlers: [],
+      secondInningsStarted: true
+    });
+  };
+
+  const handleFinish = async () => {
     const confirmEnd = window.confirm("ARE YOU SURE YOU WANT TO END THE MATCH ??");
     if (!confirmEnd) return;
     
-    // If there's an incomplete over, add it to the over history
-    if (currentOverStats.balls.length > 0) {
-      setOverHistory([...overHistory, currentOverStats]);
+    try {
+      // Check if API is available
+      const apiAvailable = await isApiAvailable();
+      if (!apiAvailable) {
+        alert("Warning: API is not available. Match data will be saved locally and synced when the API is available.");
+      }
+      
+      // Save current over if in progress
+      if (currentOverStats.balls.length > 0) {
+        setOverHistory([...overHistory, currentOverStats]);
+      }
+      
+      // Get match data from localStorage
+      const matchResult = JSON.parse(localStorage.getItem(`matchResult-${matchId}`)) || {};
+      const matchData = JSON.parse(localStorage.getItem(`match-${matchId}`)) || {};
+      const ballByBall = JSON.parse(localStorage.getItem(`ballByBall-${matchId}`)) || [];
+      
+      // If we don't have a match result yet, create one
+      if (!matchResult.matchId) {
+        matchResult.matchId = matchId;
+        matchResult.firstInningsScore = firstInningsScore;
+        matchResult.firstInningsWickets = firstInningsWickets;
+        matchResult.firstInningsOvers = firstInningsOvers;
+        matchResult.secondInningsScore = runs;
+        matchResult.secondInningsWickets = wickets;
+        matchResult.secondInningsOvers = balls / 6;
+        
+        // Determine winner based on scores
+        if (currentInnings === 2) {
+          if (runs >= runsToWin) {
+            matchResult.winningTeam = toss?.batFirst;
+            matchResult.result = 'teamB_won';
+            matchResult.result = `${teams.find(t => t._id === toss?.batFirst)?.name} won by ${10 - wickets} wickets`;
+          } else {
+            matchResult.winningTeam = toss?.bowlFirst;
+            matchResult.result = 'teamA_won';
+            matchResult.result = `${teams.find(t => t._id === toss?.bowlFirst)?.name} won by ${firstInningsScore - runs} runs`;
+          }
+        } else {
+          matchResult.result = 'n/a';
+          matchResult.result = "Match ended without a result";
+        }
+      }
+      
+     // Prepare complete match data
+const completeMatchData = {
+  ...matchData,
+  ...matchResult,
+  ballByBall,
+  overHistory,
+  status: 'completed',
+  completedAt: new Date().toISOString(),
+  // Explicitly add these fields to match what the API expects
+  firstInningsScore: firstInningsScore,
+  secondInningsScore: runs,
+  firstInningsWickets: firstInningsWickets,
+  secondInningsWickets: wickets,
+  firstInningsOvers: firstInningsOvers,
+  secondInningsOvers: balls / 6,
+  result: matchResult.result, // Make sure this is one of the allowed enum values
+  resultDescription: matchResult.resultDescription // This is your human-readable result
+};
+
+console.log("Sending match completion data:", completeMatchData);
+      
+      // Update match in database
+      let matchUpdateSuccess = false;
+      if (apiAvailable) {
+        try {
+          const response = await axios.post(`/api/matches/${matchId}/complete`, completeMatchData);
+          console.log("Match completion response:", response.data);
+          matchUpdateSuccess = true;
+        } catch (matchError) {
+          console.error("Error updating match in database:", matchError);
+          console.error("Error details:", matchError.response?.data || matchError.message);
+        }
+      }
+      
+      if (!matchUpdateSuccess) {
+        // Store match data in localStorage as fallback
+        localStorage.setItem(`completedMatch-${matchId}`, JSON.stringify(completeMatchData));
+        console.log("Stored match data in localStorage as fallback");
+      }
+      
+      // Update points table
+      const pointsUpdate = {
+        matchId,
+        teamA: match.teamA,
+        teamB: match.teamB,
+        winner: matchResult.winningTeam,
+        teamAScore: currentInnings === 1 ? runs : firstInningsScore,
+        teamBScore: currentInnings === 1 ? 0 : runs,
+        teamAOvers: currentInnings === 1 ? (balls / 6) : firstInningsOvers,
+        teamBOvers: currentInnings === 1 ? 0 : (balls / 6),
+        stage: match.stage
+      };
+      
+      console.log("Sending points update data:", pointsUpdate);
+      
+      let pointsUpdateSuccess = false;
+      if (apiAvailable) {
+        try {
+          const response = await axios.post(`/api/points/update`, pointsUpdate);
+          console.log("Points update response:", response.data);
+          pointsUpdateSuccess = true;
+        } catch (pointsError) {
+          console.error("Error updating points table:", pointsError);
+          console.error("Error details:", pointsError.response?.data || pointsError.message);
+        }
+      }
+      
+      if (!pointsUpdateSuccess) {
+        // Store points data in localStorage as fallback
+        localStorage.setItem(`pointsUpdate-${matchId}`, JSON.stringify(pointsUpdate));
+        console.log("Stored points data in localStorage as fallback");
+      }
+      
+      // Emit socket events
+      socket.emit('matchComplete', completeMatchData);
+      socket.emit('pointsTableUpdate', pointsUpdate);
+      
+      // Clear match state
+      setIsMatchStarted(false);
+      setIsMatchPaused(false);
+      setOverStarted(false);
+      setIsMatchComplete(true);
+      
+      // Clear localStorage for match data
+      localStorage.removeItem(`match-${matchId}`);
+      localStorage.removeItem(`ballByBall-${matchId}`);
+      localStorage.removeItem(`matchResult-${matchId}`);
+      
+      // Show completion message
+      if (matchUpdateSuccess && pointsUpdateSuccess) {
+        alert(`Match completed successfully: ${matchResult.result}`);
+      } else {
+        alert(`Match completed with some issues: ${matchResult.result}\nSome data was saved locally and will be synced when the server is available.`);
+      }
+      
+      // Redirect to matches page
+      navigate('/matches');
+      
+    } catch (error) {
+      console.error('Error completing match:', error);
+      alert(`Error completing match: ${error.message}`);
     }
-    
-    setIsMatchStarted(false);
-    setIsMatchPaused(false);
-    setOverStarted(false);
-    persistMatchStatus({ isMatchStarted: false, isMatchPaused: false, overStarted: false });
   };
 
-  // NEW: Handle end of over and bowler change
+  useEffect(() => {
+    if (match && isMatchStarted && !isMatchPaused) {
+      const isOversComplete = balls >= (match.overs * 6);
+      const isAllOut = wickets >= 10;
+      
+      if ((isOversComplete || isAllOut) && currentInnings === 1 && !isInningsComplete) {
+        // Store first innings details
+        setFirstInningsScore(runs);
+        setFirstInningsWickets(wickets);
+        setFirstInningsOvers(balls / 6);
+        
+        // Calculate runs to win for second innings
+        setRunsToWin(runs + 1);
+        
+        // Mark innings as complete
+        setIsInningsComplete(true);
+        
+        // Show second innings prompt
+        setShowSecondInningsPrompt(true);
+      }
+    }
+  }, [balls, wickets, match, isMatchStarted, isMatchPaused, currentInnings, isInningsComplete]);
+
   const completeOver = () => {
-    // Add current over to history
     const completedOver = { 
       ...currentOverStats,
       bowler: bowler?._id,
@@ -206,21 +470,17 @@ const LiveScoringPanel = () => {
     const updatedOverHistory = [...overHistory, completedOver];
     setOverHistory(updatedOverHistory);
     
-    // Update previous bowlers (for enforcing cricket rules)
     const updatedPreviousBowlers = [...previousBowlers];
     if (bowler && !updatedPreviousBowlers.includes(bowler._id)) {
       updatedPreviousBowlers.push(bowler._id);
     }
     setPreviousBowlers(updatedPreviousBowlers);
     
-    // Reset current over stats
     setCurrentOverStats({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
     
-    // Swap strike (end of over rule)
     const newStrike = strike === 'batsman1' ? 'batsman2' : 'batsman1';
     setStrike(newStrike);
     
-    // Reset over status
     setIsOverComplete(false);
     setOverStarted(false);
     
@@ -251,7 +511,6 @@ const LiveScoringPanel = () => {
     });
   };
 
-  // Modify handleNextOver to check legal deliveries properly
   const handleNextOver = () => {
     const legalDeliveries = currentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
     if (legalDeliveries === 6) {
@@ -259,14 +518,18 @@ const LiveScoringPanel = () => {
       setShowBowlerModal(true);
       setIsOverComplete(false);
       setCurrentOverStats({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
-      setUndoCountInOver(0); // Reset undo count for new over
+      setUndoCountInOver(0);
     } else {
       alert(`Cannot start next over. Need ${6 - legalDeliveries} more legal deliveries.`);
     }
   };
 
   const handleBallEvent = (event) => {
-    // Check if we have 6 legal deliveries in the current over
+    if (isInningsComplete) {
+      alert("Innings is complete. Please start the second innings.");
+      return;
+    }
+
     const currentLegalDeliveries = currentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
     if (currentLegalDeliveries >= 6 && undoCountInOver === 0) {
       alert("Over is complete. Please click Next Over to continue.");
@@ -275,18 +538,20 @@ const LiveScoringPanel = () => {
 
     if (event === 'W') {
       setDismissedBatsman(strike);
+      // Check if this will be the last wicket
+      const availableBatsmen = getAvailableBatsmen();
+      const willBeLastWicket = wickets >= 9 || availableBatsmen.length === 0;
+      setIsLastWicket(willBeLastWicket);
       setShowWicketModal(true);
       return;
     }
 
-    // Skip if the event is not a number or one of the special cases
     if (isNaN(parseInt(event)) && !['Wd', 'Nb', 'Lb'].includes(event)) return;
 
     let run = 0;
     let incrementBalls = true;
     let isLegalDelivery = true;
     
-    // Handle different ball types
     if (event === 'Wd') {
       run = 1;
       incrementBalls = false;
@@ -304,7 +569,6 @@ const LiveScoringPanel = () => {
       run = parseInt(event);
     }
 
-    // Store current state for history with additional details
     const currentState = { 
       runs, 
       wickets,
@@ -320,17 +584,13 @@ const LiveScoringPanel = () => {
       currentOverStats: { ...currentOverStats }
     };
     
-    // Add to history
     setBallHistory(prev => [currentState, ...prev.slice(0, 9)]);
     setEnhancedBallHistory(prev => [currentState, ...prev.slice(0, 9)]);
 
-    // Update total runs
     const newRuns = runs + run;
     
-    // Update balls count if applicable
     const newBalls = incrementBalls ? balls + 1 : balls;
     
-    // Update current over stats
     const updatedCurrentOverStats = {
       ...currentOverStats,
       runs: currentOverStats.runs + run,
@@ -338,18 +598,16 @@ const LiveScoringPanel = () => {
       legalDeliveries: isLegalDelivery ? (currentOverStats.legalDeliveries || 0) + 1 : (currentOverStats.legalDeliveries || 0)
     };
 
-    // Check if over is complete (6 legal deliveries)
     const newLegalDeliveries = updatedCurrentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
     if (newLegalDeliveries === 6) {
       setIsOverComplete(true);
-      setOverStarted(false); // Stop the over when 6 legal deliveries are bowled
+      setOverStarted(false);
     } else {
       setIsOverComplete(false);
     }
 
     setCurrentOverStats(updatedCurrentOverStats);
     
-    // Update batsman stats if it's a counting ball and not extras
     const updatedBatsmanStats = { ...batsmanStats };
     if (incrementBalls && !['Wd', 'Nb', 'Lb'].includes(event)) {
       updatedBatsmanStats[strike] = {
@@ -361,7 +619,6 @@ const LiveScoringPanel = () => {
       };
     }
     
-    // Update bowler stats
     const updatedBowlerStats = { ...bowlerStats };
     if (!updatedBowlerStats[bowler?._id]) {
       updatedBowlerStats[bowler?._id] = { 
@@ -370,11 +627,9 @@ const LiveScoringPanel = () => {
       };
     }
     
-    // Update current bowler's stats
     if (bowler?._id) {
       const bowlerStat = updatedBowlerStats[bowler._id];
       
-      // Update based on ball type
       if (event === 'Wd') {
         updatedBowlerStats[bowler._id] = {
           ...bowlerStat,
@@ -398,21 +653,15 @@ const LiveScoringPanel = () => {
     
     const updatedBalls = [event, ...recentBalls.slice(0, 5)];
     
-    // Determine new strike position based on run count
-    // For regular deliveries, strike changes if odd runs
-    // For special deliveries (Wd, Nb, Lb), handle separately
     let nextStrike = strike;
     if (incrementBalls) {
       if (['Lb'].includes(event)) {
-        // For leg byes, strike changes on odd runs
         nextStrike = run % 2 !== 0 ? (strike === 'batsman1' ? 'batsman2' : 'batsman1') : strike;
       } else if (!['Wd', 'Nb'].includes(event)) {
-        // For regular runs, strike changes on odd runs
         nextStrike = run % 2 !== 0 ? (strike === 'batsman1' ? 'batsman2' : 'batsman1') : strike;
       }
     }
 
-    // Update all state
     setRuns(newRuns);
     setBalls(newBalls);
     setRecentBalls(updatedBalls);
@@ -420,7 +669,6 @@ const LiveScoringPanel = () => {
     setBatsmanStats(updatedBatsmanStats);
     setBowlerStats(updatedBowlerStats);
     
-    // Save to localStorage
     const stateToSave = { 
       runs: newRuns, 
       wickets,
@@ -434,17 +682,98 @@ const LiveScoringPanel = () => {
     };
     persistState(stateToSave);
 
-    // Send update via socket
     socket.emit('updateMatch', {
       matchId,
       ...stateToSave
     });
+
+    // Check if second innings target is reached
+    if (currentInnings === 2 && newRuns >= runsToWin) {
+      // Second innings team has won
+      setIsMatchComplete(true);
+      setWinningTeam(toss?.batFirst);
+      
+      // Save match result
+      const matchResult = {
+        matchId,
+        firstInningsScore: firstInningsScore,
+        firstInningsWickets: firstInningsWickets,
+        firstInningsOvers: firstInningsOvers,
+        secondInningsScore: newRuns,
+        secondInningsWickets: wickets,
+        secondInningsOvers: newBalls / 6,
+        result: `${teams.find(t => t._id === toss?.batFirst)?.name} won by ${10 - wickets} wickets`,
+        winningTeam: toss?.batFirst
+      };
+      
+      localStorage.setItem(`matchResult-${matchId}`, JSON.stringify(matchResult));
+      
+      // Notify socket
+      socket.emit('matchComplete', matchResult);
+      
+      // Update match status in the database
+      socket.emit('updateMatchStatus', {
+        matchId,
+        status: 'completed',
+        winner: toss?.batFirst,
+        result: matchResult.result,
+        teamAScore: firstInningsScore,
+        teamBScore: newRuns,
+        overs: match.overs
+      });
+      
+      // Show match complete alert
+      alert(`${teams.find(t => t._id === toss?.batFirst)?.name} won by ${10 - wickets} wickets!`);
+    }
+    
+    // Check if second innings is complete (all out or overs complete)
+    if (currentInnings === 2) {
+      const isOversComplete = newBalls >= (match.overs * 6);
+      const isAllOut = wickets >= 10;
+      
+      if (isOversComplete || isAllOut) {
+        // First innings team has won
+        setIsMatchComplete(true);
+        setWinningTeam(toss?.bowlFirst);
+        
+        // Save match result
+        const matchResult = {
+          matchId,
+          firstInningsScore: firstInningsScore,
+          firstInningsWickets: firstInningsWickets,
+          firstInningsOvers: firstInningsOvers,
+          secondInningsScore: newRuns,
+          secondInningsWickets: wickets,
+          secondInningsOvers: newBalls / 6,
+          result: `${teams.find(t => t._id === toss?.bowlFirst)?.name} won by ${firstInningsScore - newRuns} runs`,
+          winningTeam: toss?.bowlFirst
+        };
+        
+        localStorage.setItem(`matchResult-${matchId}`, JSON.stringify(matchResult));
+        
+        // Notify socket
+        socket.emit('matchComplete', matchResult);
+        
+        // Update match status in the database
+        socket.emit('updateMatchStatus', {
+          matchId,
+          status: 'completed',
+          winner: toss?.bowlFirst,
+          result: matchResult.result,
+          teamAScore: firstInningsScore,
+          teamBScore: newRuns,
+          overs: match.overs
+        });
+        
+        // Show match complete alert
+        alert(`${teams.find(t => t._id === toss?.bowlFirst)?.name} won by ${firstInningsScore - newRuns} runs!`);
+      }
+    }
   };
 
   const handleUndo = () => {
     if (enhancedBallHistory.length === 0) return;
     
-    // Check if we've reached the undo limit for this over
     if (undoCountInOver >= 6) {
       alert("Maximum 6 undos per over allowed");
       return;
@@ -452,27 +781,22 @@ const LiveScoringPanel = () => {
     
     const [prevState, ...rest] = enhancedBallHistory;
     
-    // Check if we're undoing a wicket
     if (prevState.isWicket) {
-      // Restore dismissed batsman
       if (prevState.wicketDetails.dismissedPosition === 'batsman1') {
         setBatsman1(prevState.wicketDetails.dismissedPlayer);
       } else {
         setBatsman2(prevState.wicketDetails.dismissedPlayer);
       }
       
-      // Reduce wickets count
       const updatedWickets = wickets - 1;
       setWickets(updatedWickets);
       
-      // Remove player from out players list
       const updatedOutPlayers = outPlayers.filter(
         id => id !== prevState.wicketDetails.dismissedPlayer._id
       );
       setOutPlayers(updatedOutPlayers);
       localStorage.setItem(`outPlayers-${matchId}`, JSON.stringify(updatedOutPlayers));
       
-      // Remove the wicket from wicket history in localStorage
       const wicketsHistory = JSON.parse(localStorage.getItem(`wickets-${matchId}`)) || [];
       const updatedWicketsHistory = wicketsHistory.filter(
         w => w.ballNumber !== prevState.wicketDetails.ballNumber
@@ -480,25 +804,20 @@ const LiveScoringPanel = () => {
       localStorage.setItem(`wickets-${matchId}`, JSON.stringify(updatedWicketsHistory));
     }
     
-    // Update enhanced ball history
     setEnhancedBallHistory(rest);
     
-    // Check if we need to restore the previous over
     const currentBallInOver = balls % 6;
     const isFirstBallOfOver = currentBallInOver === 1;
     const isRestoringPreviousOver = isFirstBallOfOver || currentOverStats.balls.length === 0;
     
     if (isRestoringPreviousOver && overHistory.length > 0) {
-      // Get the last completed over
       const lastOver = overHistory[overHistory.length - 1];
       
-      // Restore the previous bowler
       const previousBowler = bowlingTeamPlayers.find(p => p._id === lastOver.bowler);
       if (previousBowler) {
         setBowler(previousBowler);
       }
       
-      // Update current over stats with the last over's stats
       const restoredOverStats = {
         runs: lastOver.runs,
         wickets: lastOver.wickets,
@@ -507,21 +826,16 @@ const LiveScoringPanel = () => {
       };
       setCurrentOverStats(restoredOverStats);
       
-      // Remove the last over from history
       const updatedOverHistory = overHistory.slice(0, -1);
       setOverHistory(updatedOverHistory);
       
-      // Reset undo count for new over
       setUndoCountInOver(0);
       
-      // Set over as started since we're restoring a previous over
       setOverStarted(true);
       setIsOverComplete(false);
     } else {
-      // Increment undo count for current over
       setUndoCountInOver(prev => prev + 1);
       
-      // Update current over stats by removing the last ball
       const updatedCurrentOverStats = {
         ...currentOverStats,
         runs: currentOverStats.runs - (prevState.currentBallRuns || 0),
@@ -530,28 +844,29 @@ const LiveScoringPanel = () => {
         wickets: currentOverStats.wickets - (prevState.isWicket ? 1 : 0)
       };
 
-      // Check if the over is still complete after undo
       const remainingLegalDeliveries = updatedCurrentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
       setIsOverComplete(remainingLegalDeliveries === 6);
       
       setCurrentOverStats(updatedCurrentOverStats);
     }
     
-    // Update bowler stats
     const updatedBowlerStats = { ...prevState.bowlerStats };
     setBowlerStats(updatedBowlerStats);
     
-    // Update batsman stats
     setBatsmanStats(prevState.batsmanStats);
     
-    // Restore previous state values
     setRuns(prevState.runs);
     setWickets(prevState.wickets);
     setBalls(prevState.balls);
     setRecentBalls(prevState.recentBalls);
     setStrike(prevState.strike);
     
-    // Save to localStorage
+    // If we're undoing the last wicket, reset innings complete state
+    if (prevState.isWicket && isLastWicket) {
+      setIsLastWicket(false);
+      setIsInningsComplete(false);
+    }
+    
     persistState({ 
       runs: prevState.runs, 
       wickets: prevState.wickets,
@@ -564,7 +879,6 @@ const LiveScoringPanel = () => {
       previousBowlers
     });
 
-    // Update via socket
     socket.emit('updateMatch', {
       matchId,
       runs: prevState.runs,
@@ -585,7 +899,6 @@ const LiveScoringPanel = () => {
     persistMatchStatus({ isMatchStarted, isMatchPaused, overStarted: newOverStarted });
     
     if (newOverStarted === false) {
-      // If ending the over manually, check if we have any balls
       if (currentOverStats.balls.length > 0) {
         completeOver();
       }
@@ -595,19 +908,11 @@ const LiveScoringPanel = () => {
   };
 
   const handleWicketSubmit = () => {
-    if (!nextBatsman) {
-      alert("Please select the next batsman");
-      return;
-    }
-
-    // Prepare dismissedPlayer info
     const dismissedPlayer = dismissedBatsman === 'batsman1' ? batsman1 : batsman2;
     
-    // Store batsman stats before wicket for history
     const currentStats = { ...batsmanStats };
     const currentBowlerStats = { ...bowlerStats };
 
-    // Current state for history - with wicket details for potential undo
     const currentState = { 
       runs, 
       wickets,
@@ -627,18 +932,109 @@ const LiveScoringPanel = () => {
       }
     };
     
-    // Add to both history trackers
     setBallHistory(prev => [currentState, ...prev.slice(0, 9)]);
     setEnhancedBallHistory(prev => [currentState, ...prev.slice(0, 9)]);
 
-    // Update wickets count and ball count
     const newWickets = wickets + 1;
     const newBalls = balls + 1;
     
-    // Use simple "W" for wicket in recent balls display
     const updatedBalls = ["W", ...recentBalls.slice(0, 5)];
 
-    // Update batsmen
+    // Check if this is the last wicket (10 wickets or no more players available)
+    const availableBatsmen = getAvailableBatsmen();
+    const isLastWicketNow = newWickets >= 10 || availableBatsmen.length === 0;
+
+    if (isLastWicketNow) {
+      // Handle last wicket - end the innings
+      setWickets(newWickets);
+      setBalls(newBalls);
+      setRecentBalls(updatedBalls);
+      
+      // Update bowler stats
+      const updatedBowlerStats = { ...bowlerStats };
+      if (bowler?._id) {
+        if (!updatedBowlerStats[bowler._id]) {
+          updatedBowlerStats[bowler._id] = { 
+            runs: 0, wickets: 0, balls: 0, name: bowler?.name,
+            wides: 0, noBalls: 0, maidens: 0 
+          };
+        }
+        updatedBowlerStats[bowler._id] = {
+          ...updatedBowlerStats[bowler._id],
+          wickets: updatedBowlerStats[bowler._id].wickets + 1,
+          balls: updatedBowlerStats[bowler._id].balls + 1
+        };
+      }
+      
+      // Update current over stats
+      const updatedCurrentOverStats = {
+        ...currentOverStats,
+        wickets: currentOverStats.wickets + 1,
+        balls: [...currentOverStats.balls, "W"]
+      };
+      setCurrentOverStats(updatedCurrentOverStats);
+      
+      setBowlerStats(updatedBowlerStats);
+      
+      // Save state
+      persistState({ 
+        runs, 
+        wickets: newWickets,
+        balls: newBalls, 
+        recentBalls: updatedBalls, 
+        strike,
+        batsmanStats,
+        bowlerStats: updatedBowlerStats,
+        overHistory,
+        previousBowlers
+      });
+
+      // Notify socket
+      socket.emit('updateMatch', {
+        matchId,
+        runs,
+        wickets: newWickets,
+        balls: newBalls,
+        recentBalls: updatedBalls,
+        strike,
+        batsmanStats,
+        bowlerStats: updatedBowlerStats,
+        wicket: {
+          batsmanId: dismissedPlayer._id,
+          batsmanName: dismissedPlayer.name,
+          wicketType,
+          fielderId: fielder || null,
+          fielderName: fielder ? bowlingTeamPlayers.find(p => p._id === fielder)?.name : null,
+          bowlerId: bowler?._id,
+          bowlerName: bowler?.name,
+          ballNumber: balls + 1,
+          over: Math.floor(balls / 6) + (balls % 6 === 5 ? 1 : 0)
+        }
+      });
+
+      // Close modal and reset
+      setShowWicketModal(false);
+      setWicketType('');
+      setFielder('');
+      setNextBatsman('');
+      setIsLastWicket(false);
+      
+      // Mark innings as complete
+      setIsInningsComplete(true);
+      
+      // Show second innings prompt
+      setShowSecondInningsPrompt(true);
+      
+      return;
+    }
+
+    // For non-last wickets, require next batsman selection
+    if (!nextBatsman) {
+      alert("Please select the next batsman");
+      return;
+    }
+
+    // Continue with normal wicket handling for non-last wickets
     const nextBatsmanPlayer = battingTeamPlayers.find(p => p._id === nextBatsman);
     
     // Add dismissed player to out players
@@ -646,7 +1042,7 @@ const LiveScoringPanel = () => {
     setOutPlayers(updatedOutPlayers);
     localStorage.setItem(`outPlayers-${matchId}`, JSON.stringify(updatedOutPlayers));
 
-    // Record wicket details (but don't display in recent balls)
+    // Record wicket details
     const wicketDetails = {
       batsmanId: dismissedPlayer._id,
       batsmanName: dismissedPlayer.name,
@@ -663,15 +1059,12 @@ const LiveScoringPanel = () => {
     wicketsHistory.push(wicketDetails);
     localStorage.setItem(`wickets-${matchId}`, JSON.stringify(wicketsHistory));
 
-    // Reset stats for the new batsman
+    // Update batsman stats
     const updatedBatsmanStats = { ...batsmanStats };
     
-    // Replace dismissed batsman and reset their stats
     if (dismissedBatsman === 'batsman1') {
       setBatsman1(nextBatsmanPlayer);
-      // Reset stats for the new batsman
       updatedBatsmanStats.batsman1 = { runs: 0, balls: 0, fours: 0, sixes: 0 };
-      // Update player data in localStorage
       const playerData = JSON.parse(localStorage.getItem(`players-${matchId}`)) || {};
       localStorage.setItem(`players-${matchId}`, JSON.stringify({ 
         ...playerData, 
@@ -679,9 +1072,7 @@ const LiveScoringPanel = () => {
       }));
     } else {
       setBatsman2(nextBatsmanPlayer);
-      // Reset stats for the new batsman
       updatedBatsmanStats.batsman2 = { runs: 0, balls: 0, fours: 0, sixes: 0 };
-      // Update player data in localStorage
       const playerData = JSON.parse(localStorage.getItem(`players-${matchId}`)) || {};
       localStorage.setItem(`players-${matchId}`, JSON.stringify({ 
         ...playerData, 
@@ -689,7 +1080,7 @@ const LiveScoringPanel = () => {
       }));
     }
     
-    // Update bowler wicket stats
+    // Update bowler stats
     const updatedBowlerStats = { ...bowlerStats };
     if (bowler?._id) {
       if (!updatedBowlerStats[bowler._id]) {
@@ -713,16 +1104,14 @@ const LiveScoringPanel = () => {
     };
     setCurrentOverStats(updatedCurrentOverStats);
     
-    // Update batsman stats state
     setBatsmanStats(updatedBatsmanStats);
     setBowlerStats(updatedBowlerStats);
 
-    // Update wickets and ball count state
     setWickets(newWickets);
     setBalls(newBalls);
     setRecentBalls(updatedBalls);
     
-    // Save all to localStorage
+    // Save state
     persistState({ 
       runs, 
       wickets: newWickets,
@@ -754,20 +1143,18 @@ const LiveScoringPanel = () => {
     setFielder('');
     setNextBatsman('');
     
-    // Check if over is complete (6 legal deliveries)
+    // Check if over is complete
     if (newBalls % 6 === 0) {
       completeOver();
     }
   };
   
-  // NEW: Handle bowler selection at the end of an over
   const handleBowlerSelection = () => {
     if (!selectedBowler) {
       alert("Please select a bowler");
       return;
     }
     
-    // Cricket rules: A bowler cannot bowl two consecutive overs
     if (bowler?._id === selectedBowler) {
       alert("Same bowler cannot bowl consecutive overs");
       return;
@@ -776,7 +1163,6 @@ const LiveScoringPanel = () => {
     const newBowler = bowlingTeamPlayers.find(p => p._id === selectedBowler);
     setBowler(newBowler);
     
-    // Initialize stats for this bowler if not already done
     const updatedBowlerStats = { ...bowlerStats };
     if (!updatedBowlerStats[selectedBowler]) {
       updatedBowlerStats[selectedBowler] = { 
@@ -786,32 +1172,26 @@ const LiveScoringPanel = () => {
       setBowlerStats(updatedBowlerStats);
     }
     
-    // Reset undo count for new over
     setUndoCountInOver(0);
     
-    // Update player data in localStorage
     const playerData = JSON.parse(localStorage.getItem(`players-${matchId}`)) || {};
     localStorage.setItem(`players-${matchId}`, JSON.stringify({ 
       ...playerData, 
       bowler: selectedBowler
     }));
     
-    // Start the new over
     setOverStarted(true);
     setIsOverComplete(false);
     persistMatchStatus({ isMatchStarted, isMatchPaused, overStarted: true });
     
-    // Close modal and reset selection
     setShowBowlerModal(false);
     setSelectedBowler('');
   };
 
     const handleChangeBatsmen = () => {
-      // Simple implementation to swap strike
       const newStrike = strike === 'batsman1' ? 'batsman2' : 'batsman1';
       setStrike(newStrike);
       
-      // Update localStorage
       const stateToSave = { 
         runs, 
         wickets,
@@ -825,7 +1205,6 @@ const LiveScoringPanel = () => {
       };
       persistState(stateToSave);
       
-      // Send update via socket
       socket.emit('updateMatch', {
         matchId,
         ...stateToSave
@@ -841,12 +1220,9 @@ const LiveScoringPanel = () => {
       );
     };
   
-    // Get available bowlers according to cricket rules
     const getAvailableBowlers = () => {
       if (!bowlingTeamPlayers) return [];
       
-      // In cricket, a bowler cannot bowl consecutive overs
-      // Filter out the last bowler if there's more than one option
       if (bowler && bowlingTeamPlayers.length > 1) {
         return bowlingTeamPlayers.filter(player => player._id !== bowler._id);
       }
@@ -864,7 +1240,6 @@ const LiveScoringPanel = () => {
   
     const needsFielder = ['caught', 'run_out', 'stumped'].includes(wicketType);
   
-    // Format overs properly (whole number.balls)
     const formatOvers = () => {
       const completeOvers = Math.floor(balls / 6);
       const remainingBalls = balls % 6;
@@ -893,7 +1268,51 @@ const LiveScoringPanel = () => {
               <p className="text-xs text-blue-700 mt-1">{teams.find(t => t._id === toss.tossWinner)?.name} won the toss and elected to bat</p>
             )}
             <p className="text-xs text-indigo-700 mt-1">Overs: {match?.overs || 'N/A'}</p>
-
+            <p className="text-xs font-semibold text-green-700 mt-1">
+              {currentInnings === 1 ? '1st Innings' : '2nd Innings'} 
+              {isInningsComplete && currentInnings === 1 && ' (Completed)'}
+            </p>
+            {currentInnings === 2 && (
+              <p className="text-xs font-semibold text-red-700 mt-1">
+                Target: {runsToWin} runs ({runsToWin - runs} runs needed)
+              </p>
+            )}
+            {currentInnings === 1 && (
+              <div className="mt-3">
+                <button 
+                  onClick={() => {
+                    // Check if first innings is complete (all overs bowled or all wickets fallen)
+                    const isOversComplete = balls >= (match.overs * 6);
+                    const isAllOut = wickets >= 10;
+                    
+                    if (!isOversComplete && !isAllOut) {
+                      alert("Cannot start 2nd innings. First innings must be completed (all overs bowled or all wickets fallen).");
+                      return;
+                    }
+                    
+                    setShowSecondInningsConfirmation(true);
+                  }}
+                  className={`bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-md w-full text-sm font-semibold transition-colors duration-200 ${
+                    (!isInningsComplete) ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                  disabled={!isInningsComplete}
+                >
+                  Start 2nd Inning
+                </button>
+                {!isInningsComplete && (
+                  <p className="text-xs text-gray-500 mt-1 text-center">
+                    Complete first innings to enable second innings
+                  </p>
+                )}
+              </div>
+            )}
+            {isMatchComplete && (
+              <div className="mt-2 p-2 bg-green-100 rounded-lg">
+                <p className="text-sm font-bold text-green-800 text-center">
+                  {teams.find(t => t._id === winningTeam)?.name} won the match!
+                </p>
+              </div>
+            )}
           </div>
         )}
   
@@ -938,10 +1357,8 @@ const LiveScoringPanel = () => {
           )}
         </div>
   
-        {/* Explicitly check if the match is started and not paused to show the scoring interface */}
         {(isMatchStarted && !isMatchPaused) && (
           <div className="space-y-4">
-            {/* Toggle Over Button (only visible when match is started) */}
             <div className="flex justify-center">
               <button 
                 onClick={handleToggleOver}
@@ -951,10 +1368,8 @@ const LiveScoringPanel = () => {
               </button>
             </div>
             
-            {/* Only show run buttons when over is started */}
             {overStarted && (
               <>
-                {/* Row 1: Standard runs */}
                 <div className="grid grid-cols-5 gap-3">
                   {[{ val: '0', label: 'Dot' }, { val: '1', label: 'Single' }, { val: '2', label: 'Double' },
                     { val: '3', label: 'Triple' }, { val: '4', label: 'Four', className: 'bg-blue-100 text-blue-800' }
@@ -970,7 +1385,6 @@ const LiveScoringPanel = () => {
                   ))}
                 </div>
             
-                {/* Row 2: Extras and big shots */}
                 <div className="grid grid-cols-5 gap-3">
                   {[{ val: '6', label: 'Six', className: 'bg-blue-100 text-blue-800' },
                     { val: 'W', label: 'Wicket', className: 'bg-red-100 text-red-700' },
@@ -989,7 +1403,6 @@ const LiveScoringPanel = () => {
                   ))}
                 </div>
                 
-                {/* Undo and Next Over Buttons */}
                 <div className="flex justify-center gap-4">
                   <button 
                     onClick={handleUndo} 
@@ -1030,7 +1443,6 @@ const LiveScoringPanel = () => {
           </div>
         </div>
   
-        {/* Current Over Information */}
         {overStarted && currentOverStats.balls.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-md">
             <h3 className="text-base font-semibold text-gray-800 mb-2">Current Over</h3>
@@ -1053,7 +1465,6 @@ const LiveScoringPanel = () => {
           </div>
         )}
   
-        {/* Over History */}
         {overHistory.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-md">
             <h3 className="text-base font-semibold text-gray-800 mb-2">Over History</h3>
@@ -1083,7 +1494,6 @@ const LiveScoringPanel = () => {
           </div>
         )}
   
-        {/* Bowlers Summary */}
         {Object.keys(bowlerStats).length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-md">
             <h3 className="text-base font-semibold text-gray-800 mb-2">Bowlers Summary</h3>
@@ -1116,13 +1526,11 @@ const LiveScoringPanel = () => {
           </div>
         )}
   
-        {/* Wicket Modal */}
         {showWicketModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-xl p-6 shadow-xl w-11/12 max-w-md">
               <h3 className="text-lg font-bold text-red-700 mb-4">Wicket Fallen!</h3>
               
-              {/* Wicket Type */}
               <div className="mb-4">
                 <label className="block text-gray-700 text-sm font-bold mb-2">
                   Dismissal Type
@@ -1141,7 +1549,6 @@ const LiveScoringPanel = () => {
                 </select>
               </div>
               
-              {/* Fielder (only for caught, run out, stumped) */}
               {needsFielder && (
                 <div className="mb-4">
                   <label className="block text-gray-700 text-sm font-bold mb-2">
@@ -1162,7 +1569,8 @@ const LiveScoringPanel = () => {
                 </div>
               )}
               
-              {/* Next Batsman */}
+              {/* Only show next batsman selection if it's not the last wicket */}
+              {!isLastWicket && (
               <div className="mb-4">
                 <label className="block text-gray-700 text-sm font-bold mb-2">
                   Next Batsman
@@ -1180,8 +1588,8 @@ const LiveScoringPanel = () => {
                   ))}
                 </select>
               </div>
+              )}
               
-              {/* Action Buttons */}
               <div className="flex justify-between">
                 <button 
                   onClick={() => setShowWicketModal(false)} 
@@ -1192,7 +1600,7 @@ const LiveScoringPanel = () => {
                 <button 
                   onClick={handleWicketSubmit}
                   className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded"
-                  disabled={!wicketType || (needsFielder && !fielder) || !nextBatsman}
+                  disabled={!wicketType || (needsFielder && !fielder) || (!isLastWicket && !nextBatsman)}
                 >
                   Confirm Wicket
                 </button>
@@ -1201,7 +1609,6 @@ const LiveScoringPanel = () => {
           </div>
         )}
   
-        {/* Bowler Selection Modal */}
         {showBowlerModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-xl p-6 shadow-xl w-11/12 max-w-md">
@@ -1233,7 +1640,6 @@ const LiveScoringPanel = () => {
                 )}
               </div>
               
-              {/* Action Buttons */}
               <div className="flex justify-between">
                 <button 
                   onClick={() => {
@@ -1251,6 +1657,59 @@ const LiveScoringPanel = () => {
                   disabled={!selectedBowler}
                 >
                   Start Over
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+  
+        {showSecondInningsPrompt && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 shadow-xl w-11/12 max-w-md">
+              <h3 className="text-lg font-bold text-blue-700 mb-4">First Innings Complete!</h3>
+              <p className="text-gray-700 mb-6">
+                {teams.find(t => t._id === toss?.batFirst)?.name} scored {runs}/{wickets} in {formatOvers()} overs.
+              </p>
+              <div className="flex justify-end gap-4">
+                <button
+                  onClick={() => setShowSecondInningsPrompt(false)}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-full shadow"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => setShowSecondInningsConfirmation(true)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full shadow"
+                >
+                  Start Second Innings
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {showSecondInningsConfirmation && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 shadow-xl w-11/12 max-w-md">
+              <h3 className="text-lg font-bold text-blue-700 mb-4">Start Second Innings?</h3>
+              <p className="text-gray-700 mb-2">
+                {teams.find(t => t._id === toss?.bowlFirst)?.name} needs {runsToWin} runs to win.
+              </p>
+              <p className="text-gray-700 mb-6">
+                Are you sure you want to start the second innings?
+              </p>
+              <div className="flex justify-end gap-4">
+                <button
+                  onClick={() => setShowSecondInningsConfirmation(false)}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-full shadow"
+                >
+                  No
+                </button>
+                <button
+                  onClick={handleSecondInnings}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full shadow"
+                >
+                  Yes
                 </button>
               </div>
             </div>
