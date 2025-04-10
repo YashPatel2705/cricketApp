@@ -17,21 +17,21 @@ const useMatchStore = create((set, get) => ({
 
   fetchTeamsWithPlayers: async (teamIds) => {
     try {
-      // Fetch teams data including players
       const teamA = await axios.get(`/api/teams/${teamIds.teamA}`);
       const teamB = await axios.get(`/api/teams/${teamIds.teamB}`);
 
-      return { teamA: teamA.data, teamB: teamB.data }; // Return full team data
+      return { teamA: teamA.data, teamB: teamB.data };
     } catch (err) {
       console.error('Error fetching teams with players:', err);
       set({ error: err.message });
-      return { teamA: null, teamB: null }; // Return null on error
+      return { teamA: null, teamB: null };
     }
   },
 
   createMatch: async (data) => {
     try {
-      const res = await axios.post('/api/matches', data);
+      const payload = { ...data, overs: data.overs };
+      const res = await axios.post('/api/matches', payload);
       set({ matches: [...get().matches, res.data] });
     } catch (err) {
       set({ error: err.message });
@@ -40,7 +40,8 @@ const useMatchStore = create((set, get) => ({
 
   updateMatch: async (id, data) => {
     try {
-      const res = await axios.put(`/api/matches/${id}`, data);
+      const payload = { ...data, overs: data.overs };
+      const res = await axios.put(`/api/matches/${id}`, payload);
       const updated = get().matches.map(m => m._id === id ? res.data : m);
       set({ matches: updated });
     } catch (err) {

@@ -17,6 +17,7 @@ const MatchForm = ({ onClose, initialValues }) => {
     initialValues?.date ? new Date(initialValues.date).toISOString().slice(0, 16) : ''
   );
   const [ground, setGround] = useState(initialValues?.ground || 'Ground 1');
+  const [overs, setOvers] = useState(initialValues?.overs || 20);
 
   useEffect(() => {
     fetchTeams();
@@ -36,7 +37,7 @@ const MatchForm = ({ onClose, initialValues }) => {
       return;
     }
 
-    const payload = { teamA, teamB, stage, date, ground };
+    const payload = { teamA, teamB, stage, date, ground, overs };
 
     if (initialValues?._id) {
       await updateMatch(initialValues._id, payload);
@@ -44,89 +45,63 @@ const MatchForm = ({ onClose, initialValues }) => {
       await createMatch(payload);
     }
 
+    // Store overs in localStorage as well
+    localStorage.setItem('lastMatchOvers', overs);
+
     onClose();
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <h2 className="text-lg font-bold text-center">
+    <div className="p-4 bg-white rounded shadow">
+      <h2 className="text-xl font-semibold mb-4">
         {initialValues ? 'Edit Match' : 'Create Match'}
       </h2>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block mb-1">Team A</label>
+          <select value={teamA} onChange={(e) => setTeamA(e.target.value)} required className="w-full border p-2 rounded">
+            <option value="">Select Team A</option>
+            {teams.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+          </select>
+        </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Team A</label>
-        <select
-          value={teamA}
-          onChange={(e) => setTeamA(e.target.value)}
-          className="w-full border p-2 rounded"
-          required
-        >
-          <option value="">Select Team A</option>
-          {teams.map(team => (
-            <option key={team._id} value={team._id}>{team.name}</option>
-          ))}
-        </select>
-      </div>
+        <div>
+          <label className="block mb-1">Team B</label>
+          <select value={teamB} onChange={(e) => setTeamB(e.target.value)} required className="w-full border p-2 rounded">
+            <option value="">Select Team B</option>
+            {teams.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+          </select>
+        </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Team B</label>
-        <select
-          value={teamB}
-          onChange={(e) => setTeamB(e.target.value)}
-          className="w-full border p-2 rounded"
-          required
-        >
-          <option value="">Select Team B</option>
-          {teams.map(team => (
-            <option key={team._id} value={team._id}>{team.name}</option>
-          ))}
-        </select>
-      </div>
+        <div>
+          <label className="block mb-1">Match Date & Time</label>
+          <input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} required className="w-full border p-2 rounded" />
+        </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Match Date & Time</label>
-        <input
-          type="datetime-local"
-          className="w-full border p-2 rounded"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          required
-        />
-      </div>
+        <div>
+          <label className="block mb-1">Stage</label>
+          <select value={stage} onChange={(e) => setStage(e.target.value)} className="w-full border p-2 rounded">
+            {stages.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Stage</label>
-        <select
-          value={stage}
-          onChange={(e) => setStage(e.target.value)}
-          className="w-full border p-2 rounded"
-        >
-          {stages.map(stageOption => (
-            <option key={stageOption} value={stageOption}>{stageOption}</option>
-          ))}
-        </select>
-      </div>
+        <div>
+          <label className="block mb-1">Ground</label>
+          <select value={ground} onChange={(e) => setGround(e.target.value)} className="w-full border p-2 rounded">
+            {grounds.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Ground</label>
-        <select
-          value={ground}
-          onChange={(e) => setGround(e.target.value)}
-          className="w-full border p-2 rounded"
-        >
-          {grounds.map(groundOption => (
-            <option key={groundOption} value={groundOption}>{groundOption}</option>
-          ))}
-        </select>
-      </div>
+        <div>
+          <label className="block mb-1">Overs</label>
+          <input type="number" min="1" max="50" value={overs} onChange={(e) => setOvers(Number(e.target.value))} required className="w-full border p-2 rounded" />
+        </div>
 
-      <button
-        type="submit"
-        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded"
-      >
-        {initialValues ? 'Update Match' : 'Save Match'}
-      </button>
-    </form>
+        <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+          {initialValues ? 'Update Match' : 'Save Match'}
+        </button>
+      </form>
+    </div>
   );
 };
 

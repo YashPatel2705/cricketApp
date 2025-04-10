@@ -4,14 +4,11 @@ import { motion } from 'framer-motion';
 import useTeamStore from '../store/useTeamStore';
 import { useNavigate } from 'react-router-dom';
 
-const oversOptions = [8, 10, 12, 15, 20];
-
 const TossPopup = ({ match, onClose }) => {
   const { teams, fetchTeams } = useTeamStore();
   const navigate = useNavigate(); 
   const [tossWinner, setTossWinner] = useState('');
   const [batFirst, setBatFirst] = useState('');
-  const [overs, setOvers] = useState(10);
   const [showPlayerSelector, setShowPlayerSelector] = useState(false);
   const [batsman1, setBatsman1] = useState('');
   const [batsman2, setBatsman2] = useState('');
@@ -35,8 +32,7 @@ const TossPopup = ({ match, onClose }) => {
     const tossData = {
       tossWinner,
       batFirst,
-      bowlFirst,
-      overs
+      bowlFirst
     };
 
     localStorage.setItem(`toss-${match._id}`, JSON.stringify(tossData));
@@ -96,19 +92,6 @@ const TossPopup = ({ match, onClose }) => {
                 <option value="">Select Team</option>
                 <option value={match.teamA._id}>{match.teamA.name}</option>
                 <option value={match.teamB._id}>{match.teamB.name}</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block mb-1 font-medium">Total Overs</label>
-              <select
-                value={overs}
-                onChange={(e) => setOvers(parseInt(e.target.value))}
-                className="w-full border p-2 rounded"
-              >
-                {oversOptions.map(opt => (
-                  <option key={opt} value={opt}>{opt} Overs</option>
-                ))}
               </select>
             </div>
 

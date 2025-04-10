@@ -39,7 +39,7 @@ const LiveScoringPanel = () => {
   const [selectedBowler, setSelectedBowler] = useState('');
   const [previousBowlers, setPreviousBowlers] = useState([]); // Track bowlers to enforce consecutive over rule
   // NEW: Over statistics
-  const [currentOverStats, setCurrentOverStats] = useState({ runs: 0, wickets: 0, balls: [] });
+  const [currentOverStats, setCurrentOverStats] = useState({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
   const [overHistory, setOverHistory] = useState([]);
   // NEW: Bowler statistics
   const [bowlerStats, setBowlerStats] = useState({});
@@ -49,6 +49,12 @@ const LiveScoringPanel = () => {
     batsman1: { runs: 0, balls: 0, fours: 0, sixes: 0 },
     batsman2: { runs: 0, balls: 0, fours: 0, sixes: 0 }
   });
+
+  const [showNextOverButton, setShowNextOverButton] = useState(false);
+  const [isOverComplete, setIsOverComplete] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(true); // Assuming the current user is admin
+  // Add new state to track undo count per over
+  const [undoCountInOver, setUndoCountInOver] = useState(0);
 
   useEffect(() => {
     fetchMatches();
@@ -208,15 +214,15 @@ const LiveScoringPanel = () => {
     setPreviousBowlers(updatedPreviousBowlers);
     
     // Reset current over stats
-    setCurrentOverStats({ runs: 0, wickets: 0, balls: [] });
+    setCurrentOverStats({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
     
     // Swap strike (end of over rule)
     const newStrike = strike === 'batsman1' ? 'batsman2' : 'batsman1';
     setStrike(newStrike);
     
-    // Show bowler selection modal
+    // Reset over status
+    setIsOverComplete(false);
     setOverStarted(false);
-    setShowBowlerModal(true);
     
     persistState({
       runs,
@@ -245,8 +251,27 @@ const LiveScoringPanel = () => {
     });
   };
 
+  // Modify handleNextOver to check legal deliveries properly
+  const handleNextOver = () => {
+    const legalDeliveries = currentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
+    if (legalDeliveries === 6) {
+      completeOver();
+      setShowBowlerModal(true);
+      setIsOverComplete(false);
+      setCurrentOverStats({ runs: 0, wickets: 0, balls: [], legalDeliveries: 0 });
+      setUndoCountInOver(0); // Reset undo count for new over
+    } else {
+      alert(`Cannot start next over. Need ${6 - legalDeliveries} more legal deliveries.`);
+    }
+  };
+
   const handleBallEvent = (event) => {
-    if (!(isMatchStarted && !isMatchPaused && overStarted)) return;
+    // Check if we have 6 legal deliveries in the current over
+    const currentLegalDeliveries = currentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
+    if (currentLegalDeliveries >= 6 && undoCountInOver === 0) {
+      alert("Over is complete. Please click Next Over to continue.");
+      return;
+    }
 
     if (event === 'W') {
       setDismissedBatsman(strike);
@@ -257,7 +282,29 @@ const LiveScoringPanel = () => {
     // Skip if the event is not a number or one of the special cases
     if (isNaN(parseInt(event)) && !['Wd', 'Nb', 'Lb'].includes(event)) return;
 
-    // Store current state for history
+    let run = 0;
+    let incrementBalls = true;
+    let isLegalDelivery = true;
+    
+    // Handle different ball types
+    if (event === 'Wd') {
+      run = 1;
+      incrementBalls = false;
+      isLegalDelivery = false;
+    } else if (event === 'Nb') {
+      run = 1;
+      incrementBalls = false;
+      isLegalDelivery = false;
+    } else if (event === 'Lb') {
+      const legByeRuns = parseInt(prompt("How many leg bye runs?", "1"));
+      if (!isNaN(legByeRuns) && legByeRuns >= 0) {
+        run = legByeRuns;
+      }
+    } else {
+      run = parseInt(event);
+    }
+
+    // Store current state for history with additional details
     const currentState = { 
       runs, 
       wickets,
@@ -266,41 +313,41 @@ const LiveScoringPanel = () => {
       strike,
       batsmanStats: { ...batsmanStats },
       bowlerStats: { ...bowlerStats },
-      isWicket: false
+      isWicket: false,
+      currentBowler: bowler,
+      currentBallRuns: run,
+      wasLegalDelivery: isLegalDelivery,
+      currentOverStats: { ...currentOverStats }
     };
     
     // Add to history
     setBallHistory(prev => [currentState, ...prev.slice(0, 9)]);
     setEnhancedBallHistory(prev => [currentState, ...prev.slice(0, 9)]);
 
-    let run = 0;
-    let incrementBalls = true;
-    
-    // Handle different ball types
-    if (event === 'Wd') {
-      // Wide: +1 run, no ball increment
-      run = 1;
-      incrementBalls = false;
-    } else if (event === 'Nb') {
-      // No Ball: +1 run, no ball increment
-      run = 1;
-      incrementBalls = false;
-    } else if (event === 'Lb') {
-      // Leg Bye: ball increment, runs based on subsequent input
-      const legByeRuns = parseInt(prompt("How many leg bye runs?", "1"));
-      if (!isNaN(legByeRuns) && legByeRuns >= 0) {
-        run = legByeRuns;
-      }
-    } else {
-      // Regular runs
-      run = parseInt(event);
-    }
-
     // Update total runs
     const newRuns = runs + run;
     
     // Update balls count if applicable
     const newBalls = incrementBalls ? balls + 1 : balls;
+    
+    // Update current over stats
+    const updatedCurrentOverStats = {
+      ...currentOverStats,
+      runs: currentOverStats.runs + run,
+      balls: [...currentOverStats.balls, event],
+      legalDeliveries: isLegalDelivery ? (currentOverStats.legalDeliveries || 0) + 1 : (currentOverStats.legalDeliveries || 0)
+    };
+
+    // Check if over is complete (6 legal deliveries)
+    const newLegalDeliveries = updatedCurrentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
+    if (newLegalDeliveries === 6) {
+      setIsOverComplete(true);
+      setOverStarted(false); // Stop the over when 6 legal deliveries are bowled
+    } else {
+      setIsOverComplete(false);
+    }
+
+    setCurrentOverStats(updatedCurrentOverStats);
     
     // Update batsman stats if it's a counting ball and not extras
     const updatedBatsmanStats = { ...batsmanStats };
@@ -349,14 +396,6 @@ const LiveScoringPanel = () => {
       }
     }
     
-    // Update current over stats
-    const updatedCurrentOverStats = {
-      ...currentOverStats,
-      runs: currentOverStats.runs + run,
-      balls: [...currentOverStats.balls, event]
-    };
-    setCurrentOverStats(updatedCurrentOverStats);
-    
     const updatedBalls = [event, ...recentBalls.slice(0, 5)];
     
     // Determine new strike position based on run count
@@ -400,15 +439,16 @@ const LiveScoringPanel = () => {
       matchId,
       ...stateToSave
     });
-
-    // Check if over is complete (6 legal deliveries)
-    if (incrementBalls && newBalls % 6 === 0) {
-      completeOver();
-    }
   };
 
   const handleUndo = () => {
     if (enhancedBallHistory.length === 0) return;
+    
+    // Check if we've reached the undo limit for this over
+    if (undoCountInOver >= 6) {
+      alert("Maximum 6 undos per over allowed");
+      return;
+    }
     
     const [prevState, ...rest] = enhancedBallHistory;
     
@@ -438,69 +478,89 @@ const LiveScoringPanel = () => {
         w => w.ballNumber !== prevState.wicketDetails.ballNumber
       );
       localStorage.setItem(`wickets-${matchId}`, JSON.stringify(updatedWicketsHistory));
-      
-      // Update players in localStorage
-      const playerData = JSON.parse(localStorage.getItem(`players-${matchId}`)) || {};
-      if (prevState.wicketDetails.dismissedPosition === 'batsman1') {
-        localStorage.setItem(`players-${matchId}`, JSON.stringify({
-          ...playerData,
-          batsman1: prevState.wicketDetails.dismissedPlayer._id
-        }));
-      } else {
-        localStorage.setItem(`players-${matchId}`, JSON.stringify({
-          ...playerData,
-          batsman2: prevState.wicketDetails.dismissedPlayer._id
-        }));
-      }
-      
-      // Update bowler stats - reduce wicket count
-      if (bowler?._id && prevState.bowlerStats[bowler._id]) {
-        const updatedBowlerStats = { ...prevState.bowlerStats };
-        updatedBowlerStats[bowler._id] = {
-          ...updatedBowlerStats[bowler._id],
-          wickets: updatedBowlerStats[bowler._id].wickets - 1
-        };
-        setBowlerStats(updatedBowlerStats);
-      }
     }
+    
+    // Update enhanced ball history
+    setEnhancedBallHistory(rest);
+    
+    // Check if we need to restore the previous over
+    const currentBallInOver = balls % 6;
+    const isFirstBallOfOver = currentBallInOver === 1;
+    const isRestoringPreviousOver = isFirstBallOfOver || currentOverStats.balls.length === 0;
+    
+    if (isRestoringPreviousOver && overHistory.length > 0) {
+      // Get the last completed over
+      const lastOver = overHistory[overHistory.length - 1];
+      
+      // Restore the previous bowler
+      const previousBowler = bowlingTeamPlayers.find(p => p._id === lastOver.bowler);
+      if (previousBowler) {
+        setBowler(previousBowler);
+      }
+      
+      // Update current over stats with the last over's stats
+      const restoredOverStats = {
+        runs: lastOver.runs,
+        wickets: lastOver.wickets,
+        balls: lastOver.balls,
+        legalDeliveries: lastOver.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length
+      };
+      setCurrentOverStats(restoredOverStats);
+      
+      // Remove the last over from history
+      const updatedOverHistory = overHistory.slice(0, -1);
+      setOverHistory(updatedOverHistory);
+      
+      // Reset undo count for new over
+      setUndoCountInOver(0);
+      
+      // Set over as started since we're restoring a previous over
+      setOverStarted(true);
+      setIsOverComplete(false);
+    } else {
+      // Increment undo count for current over
+      setUndoCountInOver(prev => prev + 1);
+      
+      // Update current over stats by removing the last ball
+      const updatedCurrentOverStats = {
+        ...currentOverStats,
+        runs: currentOverStats.runs - (prevState.currentBallRuns || 0),
+        balls: currentOverStats.balls.slice(0, -1),
+        legalDeliveries: currentOverStats.legalDeliveries - (prevState.wasLegalDelivery ? 1 : 0),
+        wickets: currentOverStats.wickets - (prevState.isWicket ? 1 : 0)
+      };
 
-    // Update state with previous values
+      // Check if the over is still complete after undo
+      const remainingLegalDeliveries = updatedCurrentOverStats.balls.filter(ball => !['Wd', 'Nb'].includes(ball)).length;
+      setIsOverComplete(remainingLegalDeliveries === 6);
+      
+      setCurrentOverStats(updatedCurrentOverStats);
+    }
+    
+    // Update bowler stats
+    const updatedBowlerStats = { ...prevState.bowlerStats };
+    setBowlerStats(updatedBowlerStats);
+    
+    // Update batsman stats
+    setBatsmanStats(prevState.batsmanStats);
+    
+    // Restore previous state values
     setRuns(prevState.runs);
-    if (prevState.wickets !== undefined) setWickets(prevState.wickets);
+    setWickets(prevState.wickets);
     setBalls(prevState.balls);
     setRecentBalls(prevState.recentBalls);
     setStrike(prevState.strike);
     
-    // Restore previous batsman stats
-    if (prevState.batsmanStats) {
-      setBatsmanStats(prevState.batsmanStats);
-    }
-    
-    // Restore previous bowler stats
-    if (prevState.bowlerStats) {
-      setBowlerStats(prevState.bowlerStats);
-    }
-    
-    // Update current over stats - remove last ball
-    const updatedOverStats = { ...currentOverStats };
-    if (updatedOverStats.balls.length > 0) {
-      updatedOverStats.balls.pop();
-      setCurrentOverStats(updatedOverStats);
-    }
-    
-    setEnhancedBallHistory(rest);
-    setBallHistory(rest);
-    
-    // Update localStorage
-    persistState({
-      runs: prevState.runs,
-      wickets: prevState.wickets !== undefined ? prevState.wickets : wickets,
-      balls: prevState.balls,
-      recentBalls: prevState.recentBalls,
+    // Save to localStorage
+    persistState({ 
+      runs: prevState.runs, 
+      wickets: prevState.wickets,
+      balls: prevState.balls, 
+      recentBalls: prevState.recentBalls, 
       strike: prevState.strike,
-      batsmanStats: prevState.batsmanStats || batsmanStats,
-      bowlerStats: prevState.bowlerStats || bowlerStats,
-      overHistory,
+      batsmanStats: prevState.batsmanStats,
+      bowlerStats: updatedBowlerStats,
+      overHistory: isRestoringPreviousOver ? overHistory.slice(0, -1) : overHistory,
       previousBowlers
     });
 
@@ -508,13 +568,15 @@ const LiveScoringPanel = () => {
     socket.emit('updateMatch', {
       matchId,
       runs: prevState.runs,
-      wickets: prevState.wickets !== undefined ? prevState.wickets : wickets,
+      wickets: prevState.wickets,
       balls: prevState.balls,
       recentBalls: prevState.recentBalls,
       strike: prevState.strike,
-      batsmanStats: prevState.batsmanStats || batsmanStats,
-      bowlerStats: prevState.bowlerStats || bowlerStats,
-      undoWicket: prevState.isWicket ? prevState.wicketDetails : null
+      batsmanStats: prevState.batsmanStats,
+      bowlerStats: updatedBowlerStats,
+      overHistory: isRestoringPreviousOver ? overHistory.slice(0, -1) : overHistory,
+      undoWicket: prevState.isWicket ? prevState.wicketDetails : null,
+      undoOver: isRestoringPreviousOver
     });
   };
 
@@ -724,6 +786,9 @@ const LiveScoringPanel = () => {
       setBowlerStats(updatedBowlerStats);
     }
     
+    // Reset undo count for new over
+    setUndoCountInOver(0);
+    
     // Update player data in localStorage
     const playerData = JSON.parse(localStorage.getItem(`players-${matchId}`)) || {};
     localStorage.setItem(`players-${matchId}`, JSON.stringify({ 
@@ -733,6 +798,7 @@ const LiveScoringPanel = () => {
     
     // Start the new over
     setOverStarted(true);
+    setIsOverComplete(false);
     persistMatchStatus({ isMatchStarted, isMatchPaused, overStarted: true });
     
     // Close modal and reset selection
@@ -826,6 +892,8 @@ const LiveScoringPanel = () => {
             {toss && (
               <p className="text-xs text-blue-700 mt-1">{teams.find(t => t._id === toss.tossWinner)?.name} won the toss and elected to bat</p>
             )}
+            <p className="text-xs text-indigo-700 mt-1">Overs: {match?.overs || 'N/A'}</p>
+
           </div>
         )}
   
@@ -921,13 +989,26 @@ const LiveScoringPanel = () => {
                   ))}
                 </div>
                 
-                {/* Undo Button */}
-                <div className="flex justify-center">
+                {/* Undo and Next Over Buttons */}
+                <div className="flex justify-center gap-4">
                   <button 
                     onClick={handleUndo} 
                     className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-full shadow"
                   >
                     ↩️ Undo Last Ball
+                  </button>
+                  
+                  <button 
+                    onClick={handleNextOver}
+                    disabled={!isOverComplete || !isAdmin}
+                    className={`px-4 py-2 rounded-full shadow ${
+                      isOverComplete && isAdmin
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                        : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                    }`}
+                    title={!isOverComplete ? "Over not complete yet" : !isAdmin ? "Only admin can start next over" : "Start next over"}
+                  >
+                    Next Over
                   </button>
                 </div>
               </>
