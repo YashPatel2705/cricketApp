@@ -28,16 +28,7 @@ const ManageMatches = () => {
     }
   };
 
-  const now = new Date();
-  const updatedMatches = matches.map((match) => ({
-    ...match,
-    status:
-      match.status === 'scheduled' && new Date(match.date) <= now
-        ? 'live'
-        : match.status,
-  }));
-
-  const filteredMatches = updatedMatches.filter(m => m.status === stage.toLowerCase());
+  const filteredMatches = matches.filter(m => m.status === stage.toLowerCase());
 
   return (
     <div className="p-4">
@@ -79,13 +70,34 @@ const ManageMatches = () => {
             />
             {(match.status === 'live' || match.status === 'scheduled') && (
               <button
-                onClick={() => {
-                  setSelectedMatch(match);
-                  setShowTossPopup(true);
+                onClick={async () => {
+                  if (match.status === 'scheduled') {
+                    await updateMatch(match._id, { ...match, status: 'live' });
+                  }
+                  
+                  // Check if toss and players are already selected
+                  const savedToss = JSON.parse(localStorage.getItem(`toss-${match._id}`));
+                  const savedPlayers = JSON.parse(localStorage.getItem(`players-${match._id}`));
+                  const savedState = JSON.parse(localStorage.getItem(`score-${match._id}`));
+                  
+                  if (savedToss && savedPlayers && savedState) {
+                    // If everything is set, navigate directly to live scoring
+                    navigate(`/live-scoring/${match._id}`);
+                  } else if (savedToss && savedPlayers) {
+                    // If toss and players are set but no scoring yet, navigate to live scoring
+                    navigate(`/live-scoring/${match._id}`);
+                  } else if (savedToss) {
+                    // If only toss is done, show player selection
+                    navigate(`/live-scoring/${match._id}?selectPlayers=true`);
+                  } else {
+                    // If nothing is done, show toss popup
+                    setSelectedMatch(match);
+                    setShowTossPopup(true);
+                  }
                 }}
                 className="absolute right-4 bottom-4 bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded shadow"
               >
-                Live Scoring
+                {match.status === 'live' ? 'Continue Scoring' : 'Live Scoring'}
               </button>
             )}
           </div>
