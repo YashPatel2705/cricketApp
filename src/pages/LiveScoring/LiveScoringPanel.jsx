@@ -369,16 +369,16 @@ const LiveScoringPanel = () => {
           if (runs >= runsToWin) {
             matchResult.winningTeam = toss?.batFirst;
             matchResult.result = 'teamB_won';
-            matchResult.result = `${teams.find(t => t._id === toss?.batFirst)?.name} won by ${10 - wickets} wickets`;
+            matchResult.resultDescription = `${teams.find(t => t._id === toss?.batFirst)?.name} won by ${10 - wickets} wickets`;
           } else {
             matchResult.winningTeam = toss?.bowlFirst;
             matchResult.result = 'teamA_won';
-            matchResult.result = `${teams.find(t => t._id === toss?.bowlFirst)?.name} won by ${firstInningsScore - runs} runs`;
+            matchResult.resultDescription = `${teams.find(t => t._id === toss?.bowlFirst)?.name} won by ${firstInningsScore - runs} runs`;
           }
         } else {
           matchResult.result = 'n/a';
-          matchResult.result = "Match ended without a result";
-        }
+          matchResult.resultDescription = "Match ended without a result";
+        }        
       }
       
      // Prepare complete match data

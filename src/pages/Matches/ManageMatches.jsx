@@ -8,6 +8,11 @@ import TossPopup from '../../components/TossPopup';
 
 const stages = ['Scheduled', 'Live', 'Completed'];
 
+const statusMap = {
+  Scheduled: 'scheduled',
+  Live: 'in_progress',
+  Completed: 'completed'
+};
 
 const ManageMatches = () => {
   const navigate = useNavigate();
@@ -28,7 +33,9 @@ const ManageMatches = () => {
     }
   };
 
-  const filteredMatches = matches.filter(m => m.status === stage.toLowerCase());
+  const filteredMatches = matches.filter(
+    (m) => m.status === statusMap[stage]
+  );
 
   return (
     <div className="p-4">
@@ -46,11 +53,15 @@ const ManageMatches = () => {
       </div>
 
       <div className="flex gap-2 mb-4">
-        {stages.map(s => (
+        {stages.map((s) => (
           <button
             key={s}
             onClick={() => setStage(s)}
-            className={`px-3 py-1 rounded-full text-sm ${stage === s ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+            className={`px-3 py-1 rounded-full text-sm ${
+              stage === s
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 text-gray-700'
+            }`}
           >
             {s}
           </button>
@@ -58,7 +69,7 @@ const ManageMatches = () => {
       </div>
 
       <div className="space-y-4">
-        {filteredMatches.map(match => (
+        {filteredMatches.map((match) => (
           <div key={match._id} className="relative">
             <MatchCard
               match={match}
@@ -68,40 +79,46 @@ const ManageMatches = () => {
                 setShowForm(true);
               }}
             />
-            {(match.status === 'live' || match.status === 'scheduled') && (
-              <button
-                onClick={async () => {
-                  if (match.status === 'scheduled') {
-                    await updateMatch(match._id, { ...match, status: 'live' });
-                  }
-                  
-                  // Check if toss and players are already selected
-                  const savedToss = JSON.parse(localStorage.getItem(`toss-${match._id}`));
-                  const savedPlayers = JSON.parse(localStorage.getItem(`players-${match._id}`));
-                  const savedState = JSON.parse(localStorage.getItem(`score-${match._id}`));
-                  
-                  if (savedToss && savedPlayers && savedState) {
-                    // If everything is set, navigate directly to live scoring
-                    navigate(`/live-scoring/${match._id}`);
-                  } else if (savedToss && savedPlayers) {
-                    // If toss and players are set but no scoring yet, navigate to live scoring
-                    navigate(`/live-scoring/${match._id}`);
-                  } else if (savedToss) {
-                    // If only toss is done, show player selection
-                    navigate(`/live-scoring/${match._id}?selectPlayers=true`);
-                  } else {
-                    // If nothing is done, show toss popup
-                    setSelectedMatch(match);
-                    setShowTossPopup(true);
-                  }
-                }}
-                className="absolute right-4 bottom-4 bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded shadow"
-              >
-                {match.status === 'live' ? 'Continue Scoring' : 'Live Scoring'}
-              </button>
+
+            {(match.status === 'scheduled' || match.status === 'in_progress') && (
+              <div className="absolute right-4 bottom-4 flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (match.status === 'scheduled') {
+                      await updateMatch(match._id, { status: 'in_progress' });
+                    }
+
+                    const savedToss = JSON.parse(localStorage.getItem(`toss-${match._id}`));
+                    const savedPlayers = JSON.parse(localStorage.getItem(`players-${match._id}`));
+                    const savedState = JSON.parse(localStorage.getItem(`score-${match._id}`));
+
+                    if (savedToss && savedPlayers && savedState) {
+                      navigate(`/live-scoring/${match._id}`);
+                    } else if (savedToss && savedPlayers) {
+                      navigate(`/live-scoring/${match._id}`);
+                    } else if (savedToss) {
+                      navigate(`/live-scoring/${match._id}?selectPlayers=true`);
+                    } else {
+                      setSelectedMatch(match);
+                      setShowTossPopup(true);
+                    }
+                  }}
+                  className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded shadow"
+                >
+                  {match.status === 'in_progress' ? 'Continue Scoring' : 'Live Scoring'}
+                </button>
+
+                <button
+                  onClick={() => handleDelete(match._id)}
+                  className="bg-red-600 hover:bg-red-700 text-white text-xs px-3 py-1 rounded shadow"
+                >
+                  Delete
+                </button>
+              </div>
             )}
           </div>
         ))}
+
         {filteredMatches.length === 0 && (
           <p className="text-gray-500 text-sm text-center">No matches found.</p>
         )}
@@ -110,7 +127,12 @@ const ManageMatches = () => {
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
           <div className="bg-white p-4 rounded-lg w-full max-w-md relative">
-            <button onClick={() => setShowForm(false)} className="absolute right-3 top-2 text-gray-600 text-xl">&times;</button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="absolute right-3 top-2 text-gray-600 text-xl"
+            >
+              &times;
+            </button>
             <MatchForm
               onClose={() => {
                 setShowForm(false);
@@ -123,7 +145,10 @@ const ManageMatches = () => {
       )}
 
       {showTossPopup && selectedMatch && (
-        <TossPopup match={selectedMatch} onClose={() => setShowTossPopup(false)} />
+        <TossPopup
+          match={selectedMatch}
+          onClose={() => setShowTossPopup(false)}
+        />
       )}
     </div>
   );
